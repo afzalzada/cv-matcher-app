@@ -4,4 +4,4 @@ PyMuPDF
 fpdf
 openpyxl
 pandas
-
+python-docx
