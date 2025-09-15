@@ -1,3 +1,7 @@
 streamlit
 scikit-learn
 PyMuPDF
+fpdf
+openpyxl
+pandas
+
