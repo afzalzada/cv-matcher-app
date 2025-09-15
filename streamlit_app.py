@@ -1,3 +1,5 @@
+st.write("✅ App is running")
+
 # Add these imports at the top
 import pandas as pd
 from fpdf import FPDF
