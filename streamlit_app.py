@@ -8,7 +8,6 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import io
-import re
 
 # Streamlit app configuration
 st.set_page_config(page_title="CV-JD Matcher", layout="wide")
@@ -21,6 +20,23 @@ if not HF_TOKEN:
     st.error("Hugging Face API token not found in secrets.toml. Please add it to continue.")
     st.stop()
 client = InferenceClient(token=HF_TOKEN)
+
+# Function to test API connectivity
+def test_api():
+    try:
+        test_prompt = "Return: API is working."
+        response = client.text_generation(
+            test_prompt,
+            model="microsoft/Phi-3-mini-4k-instruct",
+            max_new_tokens=10,
+            temperature=0.1
+        )
+        if "API is working" in response:
+            st.success("Hugging Face API is working correctly!")
+        else:
+            st.warning("API responded but returned unexpected output.")
+    except Exception as e:
+        st.error(f"API test failed: {str(e)}")
 
 # Function to extract text from supported file types
 def extract_text(file):
@@ -46,24 +62,21 @@ def extract_text(file):
 
 # Function to check if file is a CV/resume (not a cover letter)
 def is_resume(file_name, text):
-    # Simple heuristic: Check file name and content for CV/resume indicators
     resume_keywords = ["curriculum vitae", "resume", "cv", "work experience", "education"]
     cover_letter_keywords = ["cover letter", "dear ", "application for", "to whom"]
     name_lower = file_name.lower()
     text_lower = text.lower()
     
-    # File name check
     if any(keyword in name_lower for keyword in cover_letter_keywords):
         return False
     if any(keyword in name_lower for keyword in resume_keywords):
         return True
     
-    # Content check
     resume_score = sum(1 for keyword in resume_keywords if keyword in text_lower)
     cover_score = sum(1 for keyword in cover_letter_keywords if keyword in text_lower)
     return resume_score > cover_score or resume_score > 0
 
-# Function to extract candidate details using Phi-3
+# Function to extract candidate details using Phi-3 with regex fallback
 def extract_candidate_details(cv_text, cv_name):
     try:
         prompt = f"""
@@ -103,6 +116,15 @@ def extract_candidate_details(cv_text, cv_name):
             details["Education"] = match.group(6)
             details["Phone"] = match.group(7)
             details["Email"] = match.group(8)
+        
+        # Regex fallback for phone and email
+        if details["Phone"] == "Not found":
+            phone_match = re.search(r"\b(\+?\d{1,3}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4})\b", cv_text)
+            details["Phone"] = phone_match.group(1) if phone_match else "Not found"
+        if details["Email"] == "Not found":
+            email_match = re.search(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", cv_text)
+            details["Email"] = email_match.group(0) if email_match else "Not found"
+        
         return {"cv_name": cv_name, **details}
     except Exception as e:
         st.warning(f"Error extracting details for '{cv_name}': {str(e)}")
@@ -110,15 +132,21 @@ def extract_candidate_details(cv_text, cv_name):
                 "TotalExp": 0, "RelevantExp": 0, "Education": "Not found", "Phone": "Not found", "Email": "Not found"}
 
 # Function to score a single CV against JD using Phi-3
-def score_cv(jd_text, cv_text, cv_name):
+def score_cv(jd_text, cv_text, cv_name, exp_weight, edu_weight, skill_weight):
     try:
+        total_weight = exp_weight + edu_weight + skill_weight
+        if total_weight != 100:
+            exp_weight = (exp_weight / total_weight) * 100
+            edu_weight = (edu_weight / total_weight) * 100
+            skill_weight = (skill_weight / total_weight) * 100
+        
         prompt = f"""
         JD: {jd_text}
         CV: {cv_text}
         Analyze the CV against the JD and score the fit (0-100) based on the following prioritized criteria:
-        1. Relevant Experience (50% weight): Prioritize experience in the same or higher role as the JD, with longer tenure in such roles being better. Experience in the telecom industry is preferred.
-        2. Education (30% weight): Degrees and fields aligning with JD requirements (e.g., relevant majors, higher degrees preferred).
-        3. Skills and Abilities (20% weight): Technical and soft skills matching JD requirements.
+        1. Relevant Experience ({exp_weight}% weight): Prioritize experience in the same or higher role as the JD, with longer tenure in such roles being better. Experience in the telecom industry is preferred.
+        2. Education ({edu_weight}% weight): Degrees and fields aligning with JD requirements (e.g., relevant majors, higher degrees preferred).
+        3. Skills and Abilities ({skill_weight}% weight): Technical and soft skills matching JD requirements.
         Output ONLY in this format:
         Score: X/100 | Reasons: [1-2 sentences explaining the score, focusing on experience, education, and skills]
         """
@@ -140,6 +168,17 @@ def score_cv(jd_text, cv_text, cv_name):
     except Exception as e:
         st.warning(f"Error processing '{cv_name}': {str(e)}")
         return {"cv_name": cv_name, "score": 0, "reasons": f"Processing failed: {str(e)}"}
+
+# API Test Button
+if st.button("Test API Connection"):
+    test_api()
+
+# Custom Weights
+st.subheader("Customize Scoring Weights")
+col1, col2, col3 = st.columns(3)
+exp_weight = col1.slider("Experience Weight (%)", 0, 100, 50)
+edu_weight = col2.slider("Education Weight (%)", 0, 100, 30)
+skill_weight = col3.slider("Skills Weight (%)", 0, 100, 20)
 
 # File uploaders
 jd_file = st.file_uploader("Upload Job Description (PDF, DOCX, DOC, RTF)", type=["pdf", "docx", "doc", "rtf"])
@@ -170,22 +209,31 @@ if st.button("Match CVs"):
                 st.error("No valid CVs/Resumes could be processed. Please check file formats or content.")
                 st.stop()
 
+            # Progress bar setup
+            progress_bar = st.progress(0)
+            total_tasks = len(cv_data) * 2  # Scoring + details per CV
+            completed_tasks = 0
+
             # Process CVs in parallel for scoring and details
             results = []
             candidate_details = []
             with ThreadPoolExecutor(max_workers=5) as executor:
                 # Submit scoring tasks
-                score_futures = {executor.submit(score_cv, jd_text, cv["text"], cv["name"]): cv for cv in cv_data}
+                score_futures = {executor.submit(score_cv, jd_text, cv["text"], cv["name"], exp_weight, edu_weight, skill_weight): cv for cv in cv_data}
                 # Submit details extraction tasks
                 details_futures = {executor.submit(extract_candidate_details, cv["text"], cv["name"]): cv for cv in cv_data}
                 
                 # Collect scoring results
                 for future in as_completed(score_futures):
                     results.append(future.result())
+                    completed_tasks += 1
+                    progress_bar.progress(min(completed_tasks / total_tasks, 1.0))
                 
                 # Collect details results
                 for future in as_completed(details_futures):
                     candidate_details.append(future.result())
+                    completed_tasks += 1
+                    progress_bar.progress(min(completed_tasks / total_tasks, 1.0))
 
             # Rank and get top 20
             top_20 = sorted(results, key=lambda x: x["score"], reverse=True)[:20]
@@ -213,7 +261,7 @@ if st.button("Match CVs"):
             st.subheader("Top 20 Matching CVs")
             if top_20_details:
                 df = pd.DataFrame(top_20_details)
-                st.table(df.drop(columns=["Score"]))  # Hide score in display for clarity
+                st.table(df.drop(columns=["Score"]))  # Hide score in display
                 
                 # Generate Excel file for download
                 output = io.BytesIO()
