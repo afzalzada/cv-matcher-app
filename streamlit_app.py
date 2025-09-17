@@ -1,4 +1,3 @@
-
 import streamlit as st
 import fitz  # PyMuPDF
 import docx
@@ -14,7 +13,6 @@ import striprtf
 # ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
 API_KEY = st.secrets["openrouter"]["key"] if "openrouter" in st.secrets else st.text_input("Enter your OpenRouter API Key", type="password")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
 headers = {
     "Authorization": f"Bearer {API_KEY}",
     "HTTP-Referer": "https://your-app-url.com",
@@ -36,30 +34,24 @@ def test_api_key():
     except Exception as e:
         st.error(f"⚠️ Error connecting to API: {e}")
 
-# Unified text extraction for supported formats
+# Unified text extraction
 def extract_text(file):
     try:
         filename = file.name.lower()
-
         if filename.endswith(".pdf"):
             doc = fitz.open(stream=file.read(), filetype="pdf")
             return "".join([page.get_text() for page in doc])
-
         elif filename.endswith(".docx"):
             doc = docx.Document(file)
             return "\n".join([para.text for para in doc.paragraphs])
-
         elif filename.endswith(".doc"):
             return textract.process(file.name).decode("utf-8", errors="ignore")
-
         elif filename.endswith(".rtf"):
             rtf_text = file.read().decode("utf-8", errors="ignore")
             return striprtf.rtf_to_text(rtf_text)
-
         else:
             st.warning(f"⚠️ Skipping unsupported file type: {file.name}")
             return ""
-
     except Exception as e:
         st.error(f"❌ Failed to read file: {file.name}")
         st.error(f"Error: {e}")
@@ -102,7 +94,6 @@ Explanation: <text>
 
 def hybrid_match_score(cv_text, jd_text):
     ai_score, ai_explanation = get_match_score_qwen(cv_text, jd_text)
-
     jd_keywords = set(re.findall(r'\b\w+\b', jd_text.lower()))
     cv_words = set(re.findall(r'\b\w+\b', cv_text.lower()))
     matched_keywords = jd_keywords.intersection(cv_words)
@@ -123,7 +114,6 @@ def hybrid_match_score(cv_text, jd_text):
         f"📊 Weighted Criteria Score: {weighted_score} — {weighted_explanation}\n"
         f"📈 Final Hybrid Score: {final_score}"
     )
-
     return final_score, explanation
 
 def generate_excel(names, scores, explanations, emails, phones):
@@ -172,7 +162,6 @@ cv_files = st.file_uploader("Upload CVs (PDF, DOCX, DOC, RTF)", type=["pdf", "do
 
 if jd_file and cv_files:
     jd_text = extract_text(jd_file)
-
     cv_texts, cv_names = [], []
     for cv_file in cv_files:
         text = extract_text(cv_file)
@@ -193,7 +182,6 @@ if jd_file and cv_files:
     ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
     top_n = min(30, len(scores))
     top_indices = ranked[:top_n]
-
     top_names = [cv_names[i] for i in top_indices]
     top_scores = [scores[i] for i in top_indices]
     top_explanations = [explanations[i] for i in top_indices]
