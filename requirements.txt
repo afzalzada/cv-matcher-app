@@ -1,15 +1,9 @@
 streamlit
-scikit-learn
+pandas
+python-docx
 PyMuPDF
 fpdf
 openpyxl
-pandas
-python-docx
 requests
-pytesseract
-pillow
-pdf2image
 textract
 striprtf
-six
-python-dateutil
