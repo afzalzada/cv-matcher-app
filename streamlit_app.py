@@ -1,4 +1,3 @@
-import streamlit.components.v1 as components
 import streamlit as st
 import fitz  # PyMuPDF
 import docx
@@ -12,8 +11,8 @@ import textract
 import striprtf
 
 # ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
-API_KEY = st.secrets["openrouter"]["key"] if "openrouter" in st.secrets else st.text_input("Enter your OpenRouter API Key", type="password")
-API_URL = "https://openrouter.ai/api/v1/chat/completions"
+API_KEY = st.secrets["openai"]["key"]
+API_URL = "https://api.openai.com/v1/chat/completions"
 
 headers = {
     "Authorization": f"Bearer {API_KEY}",
@@ -23,7 +22,7 @@ headers = {
 
 def test_api_key():
     test_payload = {
-        "model": "qwen/qwen3-4b:free",
+        "model": "gpt-3.5-turbo",
         "messages": [{"role": "user", "content": "Say hello"}]
     }
     try:
@@ -83,7 +82,7 @@ Score: <number>
 Explanation: <text>
 """
     payload = {
-        "model": "qwen/qwen3-4b:free",
+        "model": "gpt-3.5-turbo",
         "messages": [{"role": "user", "content": prompt}]
     }
     try:
@@ -210,5 +209,3 @@ if jd_file and cv_files:
     st.download_button("📥 Download Results as Excel", data=excel_file, file_name="top_matching_cvs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     st.download_button("📥 Download Results as PDF", data=pdf_file, file_name="top_matching_cvs.pdf", mime="application/pdf")
     st.download_button("📥 Download Top 30 CVs as ZIP", data=zip_file, file_name="top_30_cvs.zip", mime="application/zip")
-
-components.html('<iframe src="https://puter.com/ai-chat" width="100%" height="600px" frameborder="0"></iframe>', height=600)
