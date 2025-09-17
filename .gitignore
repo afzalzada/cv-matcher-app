@@ -1,17 +1,6 @@
 # Ignore Streamlit secrets
 .streamlit/secrets.toml
-
-# Ignore Python cache files
 __pycache__/
 *.pyc
-
-# Ignore environment files
+temp.rtf
 .env
-
-# Ignore system files
-.DS_Store
-Thumbs.db
-
-# Ignore logs and temp files
-*.log
-*.tmp
