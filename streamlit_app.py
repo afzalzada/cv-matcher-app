@@ -84,15 +84,6 @@ Explanation: <text>
     explanation = explanation_line.replace("Explanation:", "").strip()
     return score, explanation
 
-def generate_summary(cv_text):
-    prompt = f"Summarize this CV in 3-4 sentences:\n{cv_text}"
-    payload = {
-        "model": "qwen/qwen3-4b:free",
-        "messages": [{"role": "user", "content": prompt}]
-    }
-    response = requests.post(API_URL, headers=headers, json=payload)
-    return response.json()["choices"][0]["message"]["content"]
-
 def hybrid_match_score(cv_text, jd_text):
     ai_score, ai_explanation = get_match_score_qwen(cv_text, jd_text)
     jd_keywords = set(re.findall(r'\b\w+\b', jd_text.lower()))
@@ -100,12 +91,14 @@ def hybrid_match_score(cv_text, jd_text):
     matched_keywords = jd_keywords.intersection(cv_words)
     keyword_score = int((len(matched_keywords) / len(jd_keywords)) * 100) if jd_keywords else 0
     keyword_explanation = f"{len(matched_keywords)} of {len(jd_keywords)} keywords matched."
+
     experience_score = 20 if re.search(r'\b\d+\s+(years|year)\s+experience\b', cv_text.lower()) else 0
     education_score = 20 if re.search(r'\b(bachelor|master|phd|mba)\b', cv_text.lower()) else 0
     skills_score = 30 if re.search(r'\b(skills|proficient|expert|tools|technologies)\b', cv_text.lower()) else 0
     cert_score = 10 if re.search(r'\b(certified|certification|certificate)\b', cv_text.lower()) else 0
     weighted_score = experience_score + education_score + skills_score + cert_score
     weighted_explanation = f"Experience: {experience_score}, Education: {education_score}, Skills: {skills_score}, Certifications: {cert_score}"
+
     final_score = int((ai_score * 0.5) + (keyword_score * 0.3) + (weighted_score * 0.2))
     explanation = (
         f"🤖 AI Score: {ai_score} — {ai_explanation}\n"
@@ -115,12 +108,21 @@ def hybrid_match_score(cv_text, jd_text):
     )
     return final_score, explanation
 
+def generate_summary(cv_text):
+    prompt = f"Summarize this CV in 3-5 sentences:\n{cv_text}"
+    payload = {
+        "model": "qwen/qwen3-4b:free",
+        "messages": [{"role": "user", "content": prompt}]
+    }
+    response = requests.post(API_URL, headers=headers, json=payload)
+    return response.json()["choices"][0]["message"]["content"]
+
 def generate_heatmap(text):
     words = re.findall(r'\b\w+\b', text.lower())
     word_counts = Counter(words)
-    top_words = word_counts.most_common(20)
-    words, counts = zip(*top_words)
-    fig = px.bar(x=words, y=counts, labels={'x': 'Words', 'y': 'Frequency'}, title='Keyword Heatmap')
+    common_words = word_counts.most_common(20)
+    df = pd.DataFrame(common_words, columns=["Word", "Frequency"])
+    fig = px.bar(df, x="Word", y="Frequency", title="Top 20 Keywords in Job Description")
     st.plotly_chart(fig)
 
 st.title("📄 Enhanced AI CV Matcher")
@@ -156,13 +158,12 @@ if jd_file and cv_files and API_KEY:
         progress.progress((i + 1) / len(cv_texts))
 
     ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    filtered_indices = [i for i in ranked if scores[i] >= min_score and (keyword_filter.lower() in cv_texts[i].lower() if keyword_filter else True)]
-    top_indices = filtered_indices[:top_n]
+    top_indices = [i for i in ranked if scores[i] >= min_score and (keyword_filter.lower() in cv_texts[i].lower() if keyword_filter else True)][:top_n]
 
     st.subheader(f"🏆 Top {len(top_indices)} Matching CVs")
     for i in top_indices:
         with st.expander(f"{cv_names[i]} — Score: {scores[i]}"):
-            st.markdown(f"📋 **Summary:** {summaries[i]}")
+            st.markdown(f"📋 **Summary:**\n{summaries[i]}")
             st.markdown(f"📧 **Email:** {emails[i]}")
             st.markdown(f"📞 **Phone:** {phones[i]}")
             st.markdown("🧠 **Explanation:**")
