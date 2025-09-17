@@ -28,7 +28,7 @@ def test_api_key():
     try:
         response = requests.post(API_URL, headers=headers, json=test_payload)
         if response.status_code == 200:
-            st.success("✅ API key is working and connected to OpenRouter.")
+            st.success("✅ API key is working and is connected to Groq.")
         else:
             st.error(f"❌ API key failed. Status code: {response.status_code}")
             st.write(response.text)
