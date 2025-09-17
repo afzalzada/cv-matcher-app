@@ -9,11 +9,11 @@ import re
 import zipfile
 import textract
 import striprtf
-from collections import Counter
 
 # ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
 API_KEY = st.secrets["openrouter"]["key"] if "openrouter" in st.secrets else st.text_input("Enter your OpenRouter API Key", type="password")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
 headers = {
     "Authorization": f"Bearer {API_KEY}",
     "HTTP-Referer": "https://your-app-url.com",
@@ -35,6 +35,7 @@ def test_api_key():
     except Exception as e:
         st.error(f"⚠️ Error connecting to API: {e}")
 
+# Unified text extraction for supported formats
 def extract_text(file):
     try:
         filename = file.name.lower()
@@ -45,7 +46,7 @@ def extract_text(file):
             doc = docx.Document(file)
             return "\n".join([para.text for para in doc.paragraphs])
         elif filename.endswith(".doc"):
-            return textract.process(file.name).decode("utf-8", errors="ignore")
+            return textract.process(file).decode("utf-8", errors="ignore")
         elif filename.endswith(".rtf"):
             rtf_text = file.read().decode("utf-8", errors="ignore")
             return striprtf.rtf_to_text(rtf_text)
@@ -84,13 +85,17 @@ Explanation: <text>
         "model": "qwen/qwen3-4b:free",
         "messages": [{"role": "user", "content": prompt}]
     }
-    response = requests.post(API_URL, headers=headers, json=payload)
-    content = response.json()["choices"][0]["message"]["content"]
-    score_line = content.split('\n')[0]
-    explanation_line = "\n".join(content.split('\n')[1:])
-    score = int(score_line.replace("Score:", "").strip())
-    explanation = explanation_line.replace("Explanation:", "").strip()
-    return score, explanation
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload)
+        content = response.json()["choices"][0]["message"]["content"]
+        score_line = content.split('\n')[0]
+        explanation_line = "\n".join(content.split('\n')[1:])
+        score = int(score_line.replace("Score:", "").strip())
+        explanation = explanation_line.replace("Explanation:", "").strip()
+        return score, explanation
+    except Exception as e:
+        st.error(f"❌ Failed to parse API response: {e}")
+        return 0, "No explanation available due to API error."
 
 def hybrid_match_score(cv_text, jd_text):
     ai_score, ai_explanation = get_match_score_qwen(cv_text, jd_text)
@@ -150,16 +155,6 @@ def generate_zip_of_top_cvs(files, ranked_indices, top_n=30):
     zip_buffer.seek(0)
     return zip_buffer
 
-def display_keyword_frequencies(texts):
-    all_words = []
-    for text in texts:
-        words = re.findall(r'\b\w+\b', text.lower())
-        all_words.extend(words)
-    word_counts = Counter(all_words)
-    top_keywords = word_counts.most_common(20)
-    st.subheader("📋 Top 20 Keywords Across CVs")
-    st.table(pd.DataFrame(top_keywords, columns=["Keyword", "Frequency"]))
-
 # 🌐 Streamlit UI
 st.title("📄 AI CV Matcher (Qwen3-4B)")
 st.write("Upload a Job Description and multiple CVs to find the best matches using AI.")
@@ -172,23 +167,23 @@ cv_files = st.file_uploader("Upload CVs (PDF, DOCX, DOC, RTF)", type=["pdf", "do
 
 if jd_file and cv_files:
     jd_text = extract_text(jd_file)
-    cv_texts, cv_names = [], []
+    cv_texts, cv_names, valid_files = [], [], []
     for cv_file in cv_files:
         text = extract_text(cv_file)
         if text:
             cv_texts.append(text)
             cv_names.append(cv_file.name)
+            valid_files.append(cv_file)
 
     scores, explanations, emails, phones = [], [], [], []
-    progress = st.progress(0)
-    for i, text in enumerate(cv_texts):
-        score, explanation = hybrid_match_score(text, jd_text)
-        email_list, phone_list = extract_contacts(text)
-        scores.append(score)
-        explanations.append(explanation)
-        emails.append(", ".join(email_list) if email_list else "Not found")
-        phones.append(", ".join(phone_list) if phone_list else "Not found")
-        progress.progress((i + 1) / len(cv_texts))
+    with st.spinner("Analyzing CVs with AI..."):
+        for text in cv_texts:
+            score, explanation = hybrid_match_score(text, jd_text)
+            email_list, phone_list = extract_contacts(text)
+            scores.append(score)
+            explanations.append(explanation)
+            emails.append(", ".join(email_list) if email_list else "Not found")
+            phones.append(", ".join(phone_list) if phone_list else "Not found")
 
     ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
     top_n = min(30, len(scores))
@@ -201,16 +196,15 @@ if jd_file and cv_files:
 
     st.subheader(f"🏆 Top {top_n} Matching CVs")
     for name, score, explanation, email, phone in zip(top_names, top_scores, top_explanations, top_emails, top_phones):
-        with st.expander(f"{name} — Score: {score}"):
-            st.write(explanation)
-            st.markdown(f"📧 **Email:** {email}")
-            st.markdown(f"📞 **Phone:** {phone}")
-
-    display_keyword_frequencies(cv_texts)
+        st.markdown(f"**{name}** — Match Score: `{score}`")
+        st.write(explanation)
+        st.markdown(f"📧 **Email:** {email}")
+        st.markdown(f"📞 **Phone:** {phone}")
+        st.markdown("---")
 
     excel_file = generate_excel(top_names, top_scores, top_explanations, top_emails, top_phones)
     pdf_file = generate_pdf(top_names, top_scores, top_explanations, top_emails, top_phones)
-    zip_file = generate_zip_of_top_cvs(cv_files, ranked, top_n=30)
+    zip_file = generate_zip_of_top_cvs(valid_files, ranked, top_n=30)
 
     st.download_button("📥 Download Results as Excel", data=excel_file, file_name="top_matching_cvs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     st.download_button("📥 Download Results as PDF", data=pdf_file, file_name="top_matching_cvs.pdf", mime="application/pdf")
