@@ -87,7 +87,18 @@ Explanation: <text>
     }
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
-response_json = response.json()
+        response_json = response.json()
+        if "candidates" in response_json and len(response_json["candidates"]) > 0:
+            content = response_json["candidates"][0]["content"]["parts"][0]["text"]
+            score_line = content.split('\n')[0]
+            explanation_line = "\n".join(content.split('\n')[1:])
+            score = int(score_line.replace("Score:", "").strip())
+            explanation = explanation_line.replace("Explanation:", "").strip()
+            return score, explanation
+        else:
+            st.error("❌ Failed to parse Gemini API response: 'candidates' missing or malformed.")
+            st.write(response_json)
+            return 0, "No explanation available due to malformed Gemini API response."
 if "choices" in response_json and len(response_json["choices"]) > 0:
     content = response_json["choices"][0]["message"]["content"]
     # continue parsing...
@@ -95,11 +106,9 @@ else:
     st.error("❌ Failed to parse API response: 'choices' missing or malformed.")
     st.write(response_json)
     return 0, "No explanation available due to malformed API response."
-        score_line = content.split('\n')[0]
         explanation_line = "\n".join(content.split('\n')[1:])
         score = int(score_line.replace("Score:", "").strip())
         explanation = explanation_line.replace("Explanation:", "").strip()
-        return score, explanation
     except Exception as e:
         st.error(f"❌ Failed to parse API response: {e}")
         return 0, "No explanation available due to API error."
