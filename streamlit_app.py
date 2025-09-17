@@ -10,32 +10,30 @@ import zipfile
 import textract
 import striprtf
 
-# ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
-API_KEY = st.secrets["groq"]["key"]
-API_URL = "https://api.groq.com/openai/v1/chat/completions"
+# ✅ Load Gemini API key securely
+API_KEY = st.secrets["gemini"]["key"]
+API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
 
 headers = {
-    "Authorization": f"Bearer {API_KEY}",
-    "HTTP-Referer": "https://your-app-url.com",
-    "X-Title": "CV Matcher App"
+    "Content-Type": "application/json"
 }
 
 def test_api_key():
     test_payload = {
-        "model": "openai/gpt-oss-20b",
-        "messages": [{"role": "user", "content": "Say hello"}]
+        "contents": [{
+            "parts": [{"text": "Say hello"}]
+        }]
     }
     try:
-        response = requests.post(API_URL, headers=headers, json=test_payload)
+        response = requests.post(f"{API_URL}?key={API_KEY}", headers=headers, json=test_payload)
         if response.status_code == 200:
-            st.success("✅ API key is working and is connected to Groq.")
+            st.success("✅ Gemini API key is working.")
         else:
             st.error(f"❌ API key failed. Status code: {response.status_code}")
             st.write(response.text)
     except Exception as e:
-        st.error(f"⚠️ Error connecting to API: {e}")
+        st.error(f"⚠️ Error connecting to Gemini API: {e}")
 
-# Unified text extraction for supported formats
 def extract_text(file):
     try:
         filename = file.name.lower()
@@ -59,13 +57,13 @@ def extract_text(file):
         return ""
 
 def extract_contacts(text):
-    email_pattern = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"
-    phone_pattern = r"(\+?\d{1,3}[\s-]?)?(\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{4}"
+    email_pattern = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+"
+    phone_pattern = r"(\\+?\\d{1,3}[\\s-]?)?(\\(?\\d{2,4}\\)?[\\s-]?)?\\d{3,4}[\\s-]?\\d{4}"
     emails = re.findall(email_pattern, text)
     phones = ["".join(p).strip() for p in re.findall(phone_pattern, text) if any(p)]
     return emails, phones
 
-def get_match_score_qwen(cv_text, jd_text):
+def get_match_score_gemini(cv_text, jd_text):
     prompt = f"""
 Compare the following CV to the job description and return:
 1. A match score from 0 to 100
@@ -82,11 +80,12 @@ Score: <number>
 Explanation: <text>
 """
     payload = {
-        "model": "gpt-3.5-turbo",
-        "messages": [{"role": "user", "content": prompt}]
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
     }
     try:
-        response = requests.post(API_URL, headers=headers, json=payload)
+        response = requests.post(f"{API_URL}?key={API_KEY}", headers=headers, json=payload)
         response_json = response.json()
         if "candidates" in response_json and len(response_json["candidates"]) > 0:
             content = response_json["candidates"][0]["content"]["parts"][0]["text"]
@@ -96,35 +95,25 @@ Explanation: <text>
             explanation = explanation_line.replace("Explanation:", "").strip()
             return score, explanation
         else:
-            st.error("❌ Failed to parse Gemini API response: 'candidates' missing or malformed.")
+            st.error("❌ Failed to parse Gemini response: 'candidates' missing or malformed.")
             st.write(response_json)
-            return 0, "No explanation available due to malformed Gemini API response."
-if "choices" in response_json and len(response_json["choices"]) > 0:
-    content = response_json["choices"][0]["message"]["content"]
-    # continue parsing...
-else:
-    st.error("❌ Failed to parse API response: 'choices' missing or malformed.")
-    st.write(response_json)
-    return 0, "No explanation available due to malformed API response."
-        explanation_line = "\n".join(content.split('\n')[1:])
-        score = int(score_line.replace("Score:", "").strip())
-        explanation = explanation_line.replace("Explanation:", "").strip()
+            return 0, "No explanation available due to malformed Gemini response."
     except Exception as e:
-        st.error(f"❌ Failed to parse API response: {e}")
-        return 0, "No explanation available due to API error."
+        st.error(f"❌ Failed to parse Gemini response: {e}")
+        return 0, "No explanation available due to Gemini API error."
 
 def hybrid_match_score(cv_text, jd_text):
-    ai_score, ai_explanation = get_match_score_qwen(cv_text, jd_text)
-    jd_keywords = set(re.findall(r'\b\w+\b', jd_text.lower()))
-    cv_words = set(re.findall(r'\b\w+\b', cv_text.lower()))
+    ai_score, ai_explanation = get_match_score_gemini(cv_text, jd_text)
+    jd_keywords = set(re.findall(r'\\b\\w+\\b', jd_text.lower()))
+    cv_words = set(re.findall(r'\\b\\w+\\b', cv_text.lower()))
     matched_keywords = jd_keywords.intersection(cv_words)
     keyword_score = int((len(matched_keywords) / len(jd_keywords)) * 100) if jd_keywords else 0
     keyword_explanation = f"{len(matched_keywords)} of {len(jd_keywords)} keywords matched."
 
-    experience_score = 20 if re.search(r'\b\d+\s+(years|year)\s+experience\b', cv_text.lower()) else 0
-    education_score = 20 if re.search(r'\b(bachelor|master|phd|mba)\b', cv_text.lower()) else 0
-    skills_score = 30 if re.search(r'\b(skills|proficient|expert|tools|technologies)\b', cv_text.lower()) else 0
-    cert_score = 10 if re.search(r'\b(certified|certification|certificate)\b', cv_text.lower()) else 0
+    experience_score = 20 if re.search(r'\\b\\d+\\s+(years|year)\\s+experience\\b', cv_text.lower()) else 0
+    education_score = 20 if re.search(r'\\b(bachelor|master|phd|mba)\\b', cv_text.lower()) else 0
+    skills_score = 30 if re.search(r'\\b(skills|proficient|expert|tools|technologies)\\b', cv_text.lower()) else 0
+    cert_score = 10 if re.search(r'\\b(certified|certification|certificate)\\b', cv_text.lower()) else 0
     weighted_score = experience_score + education_score + skills_score + cert_score
     weighted_explanation = f"Experience: {experience_score}, Education: {education_score}, Skills: {skills_score}, Certifications: {cert_score}"
 
@@ -172,7 +161,7 @@ def generate_zip_of_top_cvs(files, ranked_indices, top_n=30):
     return zip_buffer
 
 # 🌐 Streamlit UI
-st.title("📄 AI CV Matcher (Qwen3-4B)")
+st.title("📄 AI CV Matcher (Gemini)")
 st.write("Upload a Job Description and multiple CVs to find the best matches using AI.")
 
 if st.button("🔍 Test API Key"):
