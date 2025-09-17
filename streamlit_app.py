@@ -1,4 +1,3 @@
-
 import streamlit as st
 import fitz  # PyMuPDF
 import docx
@@ -10,23 +9,31 @@ import re
 import zipfile
 import textract
 import striprtf
-import matplotlib.pyplot as plt
 from collections import Counter
 
-# Sidebar settings
-st.sidebar.title("Settings")
-API_KEY = st.sidebar.text_input("OpenRouter API Key", type="password")
-top_n = st.sidebar.slider("Top N CVs to display", 1, 50, 10)
-scoring_mode = st.sidebar.radio("Scoring Mode", ["Hybrid", "AI Only"])
-min_score = st.sidebar.slider("Minimum Score Filter", 0, 100, 0)
-keyword_filter = st.sidebar.text_input("Filter CVs by keyword (optional)")
-
+# ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
+API_KEY = st.secrets["openrouter"]["key"] if "openrouter" in st.secrets else st.text_input("Enter your OpenRouter API Key", type="password")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 headers = {
     "Authorization": f"Bearer {API_KEY}",
     "HTTP-Referer": "https://your-app-url.com",
     "X-Title": "CV Matcher App"
 }
+
+def test_api_key():
+    test_payload = {
+        "model": "qwen/qwen3-4b:free",
+        "messages": [{"role": "user", "content": "Say hello"}]
+    }
+    try:
+        response = requests.post(API_URL, headers=headers, json=test_payload)
+        if response.status_code == 200:
+            st.success("✅ API key is working and connected to OpenRouter.")
+        else:
+            st.error(f"❌ API key failed. Status code: {response.status_code}")
+            st.write(response.text)
+    except Exception as e:
+        st.error(f"⚠️ Error connecting to API: {e}")
 
 def extract_text(file):
     try:
@@ -43,10 +50,11 @@ def extract_text(file):
             rtf_text = file.read().decode("utf-8", errors="ignore")
             return striprtf.rtf_to_text(rtf_text)
         else:
-            st.warning(f"Unsupported file type: {file.name}")
+            st.warning(f"⚠️ Skipping unsupported file type: {file.name}")
             return ""
     except Exception as e:
-        st.error(f"Error reading file {file.name}: {e}")
+        st.error(f"❌ Failed to read file: {file.name}")
+        st.error(f"Error: {e}")
         return ""
 
 def extract_contacts(text):
@@ -84,20 +92,8 @@ Explanation: <text>
     explanation = explanation_line.replace("Explanation:", "").strip()
     return score, explanation
 
-def summarize_cv(cv_text):
-    prompt = f"Summarize this CV in 3-4 lines:\n{cv_text}"
-    payload = {
-        "model": "qwen/qwen3-4b:free",
-        "messages": [{"role": "user", "content": prompt}]
-    }
-    response = requests.post(API_URL, headers=headers, json=payload)
-    return response.json()["choices"][0]["message"]["content"]
-
 def hybrid_match_score(cv_text, jd_text):
     ai_score, ai_explanation = get_match_score_qwen(cv_text, jd_text)
-    if scoring_mode == "AI Only":
-        return ai_score, ai_explanation
-
     jd_keywords = set(re.findall(r'\b\w+\b', jd_text.lower()))
     cv_words = set(re.findall(r'\b\w+\b', cv_text.lower()))
     matched_keywords = jd_keywords.intersection(cv_words)
@@ -120,30 +116,62 @@ def hybrid_match_score(cv_text, jd_text):
     )
     return final_score, explanation
 
-def plot_keyword_heatmap(text):
-    words = re.findall(r'\b\w+\b', text.lower())
-    common = Counter(words).most_common(20)
-    if not common:
-        st.warning("No keywords to display.")
-        return
-    labels, values = zip(*common)
-    fig, ax = plt.subplots()
-    ax.barh(labels, values)
-    ax.invert_yaxis()
-    ax.set_xlabel("Frequency")
-    ax.set_title("Top 20 Keywords in Job Description")
-    st.pyplot(fig)
+def generate_excel(names, scores, explanations, emails, phones):
+    df = pd.DataFrame({
+        "CV Name": names,
+        "Match Score": scores,
+        "Explanation": explanations,
+        "Email": emails,
+        "Phone": phones
+    })
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Top Matches')
+    output.seek(0)
+    return output
 
-st.title("📄 Enhanced AI CV Matcher")
+def generate_pdf(names, scores, explanations, emails, phones):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Top Matching CVs", ln=True, align='C')
+    pdf.ln(10)
+    for name, score, explanation, email, phone in zip(names, scores, explanations, emails, phones):
+        pdf.multi_cell(0, 10, txt=f"{name} — Score: {score}\n{explanation}\n📧 Email: {email}\n📞 Phone: {phone}\n", align='L')
+        pdf.ln(5)
+    return io.BytesIO(pdf.output(dest='S').encode('latin1'))
 
-jd_file = st.file_uploader("Upload Job Description", type=["pdf", "docx", "doc", "rtf"])
-cv_files = st.file_uploader("Upload CVs", type=["pdf", "docx", "doc", "rtf"], accept_multiple_files=True)
+def generate_zip_of_top_cvs(files, ranked_indices, top_n=30):
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+        for i in ranked_indices[:top_n]:
+            file = files[i]
+            zip_file.writestr(file.name, file.getvalue())
+    zip_buffer.seek(0)
+    return zip_buffer
+
+def display_keyword_frequencies(texts):
+    all_words = []
+    for text in texts:
+        words = re.findall(r'\b\w+\b', text.lower())
+        all_words.extend(words)
+    word_counts = Counter(all_words)
+    top_keywords = word_counts.most_common(20)
+    st.subheader("📋 Top 20 Keywords Across CVs")
+    st.table(pd.DataFrame(top_keywords, columns=["Keyword", "Frequency"]))
+
+# 🌐 Streamlit UI
+st.title("📄 AI CV Matcher (Qwen3-4B)")
+st.write("Upload a Job Description and multiple CVs to find the best matches using AI.")
+
+if st.button("🔍 Test API Key"):
+    test_api_key()
+
+jd_file = st.file_uploader("Upload Job Description (PDF, DOCX, DOC, RTF)", type=["pdf", "docx", "doc", "rtf"])
+cv_files = st.file_uploader("Upload CVs (PDF, DOCX, DOC, RTF)", type=["pdf", "docx", "doc", "rtf"], accept_multiple_files=True)
 
 if jd_file and cv_files:
     jd_text = extract_text(jd_file)
-    st.subheader("📊 Job Description Keyword Heatmap")
-    plot_keyword_heatmap(jd_text)
-
     cv_texts, cv_names = [], []
     for cv_file in cv_files:
         text = extract_text(cv_file)
@@ -151,26 +179,39 @@ if jd_file and cv_files:
             cv_texts.append(text)
             cv_names.append(cv_file.name)
 
-    scores, explanations, summaries, emails, phones = [], [], [], [], []
+    scores, explanations, emails, phones = [], [], [], []
     progress = st.progress(0)
     for i, text in enumerate(cv_texts):
         score, explanation = hybrid_match_score(text, jd_text)
-        summary = summarize_cv(text)
         email_list, phone_list = extract_contacts(text)
         scores.append(score)
         explanations.append(explanation)
-        summaries.append(summary)
         emails.append(", ".join(email_list) if email_list else "Not found")
         phones.append(", ".join(phone_list) if phone_list else "Not found")
         progress.progress((i + 1) / len(cv_texts))
 
     ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    top_indices = [i for i in ranked if scores[i] >= min_score and (keyword_filter.lower() in cv_texts[i].lower() if keyword_filter else True)][:top_n]
+    top_n = min(30, len(scores))
+    top_indices = ranked[:top_n]
+    top_names = [cv_names[i] for i in top_indices]
+    top_scores = [scores[i] for i in top_indices]
+    top_explanations = [explanations[i] for i in top_indices]
+    top_emails = [emails[i] for i in top_indices]
+    top_phones = [phones[i] for i in top_indices]
 
-    st.subheader(f"🏆 Top {len(top_indices)} Matching CVs")
-    for i in top_indices:
-        with st.expander(f"{cv_names[i]} — Score: {scores[i]}"):
-            st.markdown(f"**Summary:**\n{summaries[i]}")
-            st.markdown(f"**Explanation:**\n{explanations[i]}")
-            st.markdown(f"📧 **Email:** {emails[i]}")
-            st.markdown(f"📞 **Phone:** {phones[i]}")
+    st.subheader(f"🏆 Top {top_n} Matching CVs")
+    for name, score, explanation, email, phone in zip(top_names, top_scores, top_explanations, top_emails, top_phones):
+        with st.expander(f"{name} — Score: {score}"):
+            st.write(explanation)
+            st.markdown(f"📧 **Email:** {email}")
+            st.markdown(f"📞 **Phone:** {phone}")
+
+    display_keyword_frequencies(cv_texts)
+
+    excel_file = generate_excel(top_names, top_scores, top_explanations, top_emails, top_phones)
+    pdf_file = generate_pdf(top_names, top_scores, top_explanations, top_emails, top_phones)
+    zip_file = generate_zip_of_top_cvs(cv_files, ranked, top_n=30)
+
+    st.download_button("📥 Download Results as Excel", data=excel_file, file_name="top_matching_cvs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("📥 Download Results as PDF", data=pdf_file, file_name="top_matching_cvs.pdf", mime="application/pdf")
+    st.download_button("📥 Download Top 30 CVs as ZIP", data=zip_file, file_name="top_30_cvs.zip", mime="application/zip")
