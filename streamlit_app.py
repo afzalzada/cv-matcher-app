@@ -1,3 +1,4 @@
+
 import streamlit as st
 import fitz  # PyMuPDF
 import docx
@@ -9,16 +10,16 @@ import re
 import zipfile
 import textract
 import striprtf
-import plotly.express as px
+import matplotlib.pyplot as plt
 from collections import Counter
 
 # Sidebar settings
-st.sidebar.title("⚙️ Settings")
-API_KEY = st.sidebar.text_input("🔑 OpenRouter API Key", type="password")
-top_n = st.sidebar.slider("Top N CVs to Display", min_value=1, max_value=50, value=30)
+st.sidebar.title("Settings")
+API_KEY = st.sidebar.text_input("OpenRouter API Key", type="password")
+top_n = st.sidebar.slider("Top N CVs to display", 1, 50, 10)
 scoring_mode = st.sidebar.radio("Scoring Mode", ["Hybrid", "AI Only"])
-min_score = st.sidebar.slider("Minimum Score Filter", min_value=0, max_value=100, value=0)
-keyword_filter = st.sidebar.text_input("Keyword Filter (optional)")
+min_score = st.sidebar.slider("Minimum Score Filter", 0, 100, 0)
+keyword_filter = st.sidebar.text_input("Filter CVs by keyword (optional)")
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 headers = {
@@ -42,11 +43,10 @@ def extract_text(file):
             rtf_text = file.read().decode("utf-8", errors="ignore")
             return striprtf.rtf_to_text(rtf_text)
         else:
-            st.warning(f"⚠️ Skipping unsupported file type: {file.name}")
+            st.warning(f"Unsupported file type: {file.name}")
             return ""
     except Exception as e:
-        st.error(f"❌ Failed to read file: {file.name}")
-        st.error(f"Error: {e}")
+        st.error(f"Error reading file {file.name}: {e}")
         return ""
 
 def extract_contacts(text):
@@ -84,8 +84,20 @@ Explanation: <text>
     explanation = explanation_line.replace("Explanation:", "").strip()
     return score, explanation
 
+def summarize_cv(cv_text):
+    prompt = f"Summarize this CV in 3-4 lines:\n{cv_text}"
+    payload = {
+        "model": "qwen/qwen3-4b:free",
+        "messages": [{"role": "user", "content": prompt}]
+    }
+    response = requests.post(API_URL, headers=headers, json=payload)
+    return response.json()["choices"][0]["message"]["content"]
+
 def hybrid_match_score(cv_text, jd_text):
     ai_score, ai_explanation = get_match_score_qwen(cv_text, jd_text)
+    if scoring_mode == "AI Only":
+        return ai_score, ai_explanation
+
     jd_keywords = set(re.findall(r'\b\w+\b', jd_text.lower()))
     cv_words = set(re.findall(r'\b\w+\b', cv_text.lower()))
     matched_keywords = jd_keywords.intersection(cv_words)
@@ -108,31 +120,29 @@ def hybrid_match_score(cv_text, jd_text):
     )
     return final_score, explanation
 
-def generate_summary(cv_text):
-    prompt = f"Summarize this CV in 3-5 sentences:\n{cv_text}"
-    payload = {
-        "model": "qwen/qwen3-4b:free",
-        "messages": [{"role": "user", "content": prompt}]
-    }
-    response = requests.post(API_URL, headers=headers, json=payload)
-    return response.json()["choices"][0]["message"]["content"]
-
-def generate_heatmap(text):
+def plot_keyword_heatmap(text):
     words = re.findall(r'\b\w+\b', text.lower())
-    word_counts = Counter(words)
-    common_words = word_counts.most_common(20)
-    df = pd.DataFrame(common_words, columns=["Word", "Frequency"])
-    fig = px.bar(df, x="Word", y="Frequency", title="Top 20 Keywords in Job Description")
-    st.plotly_chart(fig)
+    common = Counter(words).most_common(20)
+    if not common:
+        st.warning("No keywords to display.")
+        return
+    labels, values = zip(*common)
+    fig, ax = plt.subplots()
+    ax.barh(labels, values)
+    ax.invert_yaxis()
+    ax.set_xlabel("Frequency")
+    ax.set_title("Top 20 Keywords in Job Description")
+    st.pyplot(fig)
 
 st.title("📄 Enhanced AI CV Matcher")
 
 jd_file = st.file_uploader("Upload Job Description", type=["pdf", "docx", "doc", "rtf"])
 cv_files = st.file_uploader("Upload CVs", type=["pdf", "docx", "doc", "rtf"], accept_multiple_files=True)
 
-if jd_file and cv_files and API_KEY:
+if jd_file and cv_files:
     jd_text = extract_text(jd_file)
-    generate_heatmap(jd_text)
+    st.subheader("📊 Job Description Keyword Heatmap")
+    plot_keyword_heatmap(jd_text)
 
     cv_texts, cv_names = [], []
     for cv_file in cv_files:
@@ -141,20 +151,17 @@ if jd_file and cv_files and API_KEY:
             cv_texts.append(text)
             cv_names.append(cv_file.name)
 
-    scores, explanations, emails, phones, summaries = [], [], [], [], []
+    scores, explanations, summaries, emails, phones = [], [], [], [], []
     progress = st.progress(0)
     for i, text in enumerate(cv_texts):
-        if scoring_mode == "Hybrid":
-            score, explanation = hybrid_match_score(text, jd_text)
-        else:
-            score, explanation = get_match_score_qwen(text, jd_text)
+        score, explanation = hybrid_match_score(text, jd_text)
+        summary = summarize_cv(text)
         email_list, phone_list = extract_contacts(text)
-        summary = generate_summary(text)
         scores.append(score)
         explanations.append(explanation)
+        summaries.append(summary)
         emails.append(", ".join(email_list) if email_list else "Not found")
         phones.append(", ".join(phone_list) if phone_list else "Not found")
-        summaries.append(summary)
         progress.progress((i + 1) / len(cv_texts))
 
     ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
@@ -163,8 +170,7 @@ if jd_file and cv_files and API_KEY:
     st.subheader(f"🏆 Top {len(top_indices)} Matching CVs")
     for i in top_indices:
         with st.expander(f"{cv_names[i]} — Score: {scores[i]}"):
-            st.markdown(f"📋 **Summary:**\n{summaries[i]}")
+            st.markdown(f"**Summary:**\n{summaries[i]}")
+            st.markdown(f"**Explanation:**\n{explanations[i]}")
             st.markdown(f"📧 **Email:** {emails[i]}")
             st.markdown(f"📞 **Phone:** {phones[i]}")
-            st.markdown("🧠 **Explanation:**")
-            st.text(explanations[i])
