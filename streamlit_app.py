@@ -1,3 +1,4 @@
+
 import streamlit as st
 import fitz  # PyMuPDF
 import docx
@@ -7,8 +8,11 @@ import io
 import requests
 import re
 import zipfile
+from PIL import Image
+import pytesseract
+from pdf2image import convert_from_bytes
 
-# ✅ Load API key securely from Streamlit Cloud Secrets Manager
+# Load API key securely from Streamlit Cloud Secrets Manager
 API_KEY = st.secrets["openrouter"]["key"]
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -18,7 +22,6 @@ headers = {
     "X-Title": "CV Matcher App"
 }
 
-# ✅ Test API Key connection
 def test_api_key():
     test_payload = {
         "model": "qwen/qwen3-4b:free",
@@ -34,17 +37,45 @@ def test_api_key():
     except Exception as e:
         st.error(f"⚠️ Error connecting to API: {e}")
 
-# Extract text from PDF
-def extract_text_from_pdf(file):
-    doc = fitz.open(stream=file.read(), filetype="pdf")
-    return "".join([page.get_text() for page in doc])
+# Unified text extraction with OCR fallback
+def extract_text(file):
+    try:
+        filename = file.name.lower()
 
-# Extract text from DOCX
-def extract_text_from_docx(file):
-    doc = docx.Document(file)
-    return "\n".join([para.text for para in doc.paragraphs])
+        if filename.endswith(".pdf"):
+            doc = fitz.open(stream=file.read(), filetype="pdf")
+            text = "".join([page.get_text() for page in doc])
+            if not text.strip():
+                st.warning(f"⚠️ No extractable text found in {file.name}. Trying OCR...")
+                images = convert_from_bytes(file.getvalue())
+                text = "\n".join([pytesseract.image_to_string(img) for img in images])
+            return text
 
-# Extract email and phone
+        elif filename.endswith(".docx"):
+            doc = docx.Document(file)
+            return "\n".join([para.text for para in doc.paragraphs])
+
+        elif filename.endswith(".png") or filename.endswith(".jpg") or filename.endswith(".jpeg"):
+            image = Image.open(file)
+            return pytesseract.image_to_string(image)
+
+        elif filename.endswith(".rtf"):
+            rtf_text = file.read().decode("utf-8", errors="ignore")
+            return rtf_text
+
+        elif filename.endswith(".doc"):
+            st.warning("⚠️ .doc file support requires 'textract' which is not available in this environment.")
+            return ""
+
+        else:
+            st.error(f"Unsupported file type: {file.name}")
+            return ""
+
+    except Exception as e:
+        st.error(f"❌ Failed to read file: {file.name}")
+        st.error(f"Error: {e}")
+        return ""
+
 def extract_contacts(text):
     email_pattern = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"
     phone_pattern = r"(\+?\d{1,3}[\s-]?)?(\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{4}"
@@ -52,7 +83,6 @@ def extract_contacts(text):
     phones = ["".join(p).strip() for p in re.findall(phone_pattern, text) if any(p)]
     return emails, phones
 
-# AI scoring via Qwen3-4B
 def get_match_score_qwen(cv_text, jd_text):
     prompt = f"""
 Compare the following CV to the job description and return:
@@ -81,7 +111,32 @@ Explanation: <text>
     explanation = explanation_line.replace("Explanation:", "").strip()
     return score, explanation
 
-# Generate Excel
+def hybrid_match_score(cv_text, jd_text):
+    ai_score, ai_explanation = get_match_score_qwen(cv_text, jd_text)
+
+    jd_keywords = set(re.findall(r'\b\w+\b', jd_text.lower()))
+    cv_words = set(re.findall(r'\b\w+\b', cv_text.lower()))
+    matched_keywords = jd_keywords.intersection(cv_words)
+    keyword_score = int((len(matched_keywords) / len(jd_keywords)) * 100) if jd_keywords else 0
+    keyword_explanation = f"{len(matched_keywords)} of {len(jd_keywords)} keywords matched."
+
+    experience_score = 20 if re.search(r'\b\d+\s+(years|year)\s+experience\b', cv_text.lower()) else 0
+    education_score = 20 if re.search(r'\b(bachelor|master|phd|mba)\b', cv_text.lower()) else 0
+    skills_score = 30 if re.search(r'\b(skills|proficient|expert|tools|technologies)\b', cv_text.lower()) else 0
+    cert_score = 10 if re.search(r'\b(certified|certification|certificate)\b', cv_text.lower()) else 0
+    weighted_score = experience_score + education_score + skills_score + cert_score
+    weighted_explanation = f"Experience: {experience_score}, Education: {education_score}, Skills: {skills_score}, Certifications: {cert_score}"
+
+    final_score = int((ai_score * 0.5) + (keyword_score * 0.3) + (weighted_score * 0.2))
+    explanation = (
+        f"🤖 AI Score: {ai_score} — {ai_explanation}\n"
+        f"🔍 Keyword Match Score: {keyword_score} — {keyword_explanation}\n"
+        f"📊 Weighted Criteria Score: {weighted_score} — {weighted_explanation}\n"
+        f"📈 Final Hybrid Score: {final_score}"
+    )
+
+    return final_score, explanation
+
 def generate_excel(names, scores, explanations, emails, phones):
     df = pd.DataFrame({
         "CV Name": names,
@@ -96,7 +151,6 @@ def generate_excel(names, scores, explanations, emails, phones):
     output.seek(0)
     return output
 
-# Generate PDF
 def generate_pdf(names, scores, explanations, emails, phones):
     pdf = FPDF()
     pdf.add_page()
@@ -108,7 +162,6 @@ def generate_pdf(names, scores, explanations, emails, phones):
         pdf.ln(5)
     return io.BytesIO(pdf.output(dest='S').encode('latin1'))
 
-# Generate ZIP of top CVs
 def generate_zip_of_top_cvs(files, ranked_indices, top_n=30):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -119,29 +172,29 @@ def generate_zip_of_top_cvs(files, ranked_indices, top_n=30):
     return zip_buffer
 
 # Streamlit UI
-st.title("📄 AI CV Matcher (Qwen3-4B)")
-st.write("Upload a Job Description and multiple CVs to find the best matches using AI.")
+st.title("📄 AI CV Matcher (Hybrid Scoring)")
+st.write("Upload a Job Description and multiple CVs to find the best matches using AI and custom logic.")
 
-# 🔘 Add test button
 if st.button("🔍 Test API Key"):
     test_api_key()
 
-jd_file = st.file_uploader("Upload Job Description (PDF or DOCX)", type=["pdf", "docx"])
-cv_files = st.file_uploader("Upload CVs (PDF or DOCX)", type=["pdf", "docx"], accept_multiple_files=True)
+jd_file = st.file_uploader("Upload Job Description (PDF, DOCX, DOC, RTF, PNG, JPG)", type=["pdf", "docx", "doc", "rtf", "png", "jpg", "jpeg"])
+cv_files = st.file_uploader("Upload CVs (PDF, DOCX, DOC, RTF, PNG, JPG)", type=["pdf", "docx", "doc", "rtf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if jd_file and cv_files:
-    jd_text = extract_text_from_pdf(jd_file) if jd_file.name.endswith(".pdf") else extract_text_from_docx(jd_file)
+    jd_text = extract_text(jd_file)
 
     cv_texts, cv_names = [], []
     for cv_file in cv_files:
-        text = extract_text_from_pdf(cv_file) if cv_file.name.endswith(".pdf") else extract_text_from_docx(cv_file)
-        cv_texts.append(text)
-        cv_names.append(cv_file.name)
+        text = extract_text(cv_file)
+        if text:
+            cv_texts.append(text)
+            cv_names.append(cv_file.name)
 
     scores, explanations, emails, phones = [], [], [], []
-    with st.spinner("Analyzing CVs with AI..."):
+    with st.spinner("Analyzing CVs with Hybrid Scoring..."):
         for text in cv_texts:
-            score, explanation = get_match_score_qwen(text, jd_text)
+            score, explanation = hybrid_match_score(text, jd_text)
             email_list, phone_list = extract_contacts(text)
             scores.append(score)
             explanations.append(explanation)
