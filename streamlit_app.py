@@ -11,11 +11,12 @@ import textract
 import striprtf
 
 # ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
-API_KEY = st.secrets["groq"]["key"]
-API_URL = "https://api.groq.com/openai/v1/chat/completions"
+API_KEY = st.secrets["gemini"]["key"]
+API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
 
 headers = {
-    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json"
+}",
     "HTTP-Referer": "https://your-app-url.com",
     "X-Title": "CV Matcher App"
 }
@@ -82,14 +83,19 @@ Score: <number>
 Explanation: <text>
 """
     payload = {
-        "model": "gpt-3.5-turbo",
-        "messages": [{"role": "user", "content": prompt}]
-    }
+    "contents": [
+        {
+            "parts": [
+                {"text": prompt}
+            ]
+        }
+    ]
+}
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
 response_json = response.json()
-if "choices" in response_json and len(response_json["choices"]) > 0:
-    content = response_json["choices"][0]["message"]["content"]
+        if "candidates" in response_json and len(response_json["candidates"]) > 0:
+            content = response_json["candidates"][0]["content"]["parts"][0]["text"]
     # continue parsing...
 else:
     st.error("❌ Failed to parse API response: 'choices' missing or malformed.")
