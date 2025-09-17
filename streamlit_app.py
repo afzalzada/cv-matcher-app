@@ -12,7 +12,7 @@ import io
 # Streamlit app configuration
 st.set_page_config(page_title="CV-JD Matcher", layout="wide")
 st.title("CV-JD Matcher")
-st.write("Upload a Job Description and CVs/Resumes (PDF, DOCX, DOC, RTF) to find the top 20 candidates using AI (Phi-3 via Hugging Face).")
+st.write("Upload a Job Description and CVs/Resumes (PDF, DOCX, DOC, RTF) to find the top 20 candidates using AI (Mistral-7B-Instruct-v0.2 via Hugging Face).")
 
 # Initialize Hugging Face Inference Client
 HF_TOKEN = st.secrets.get("HF_TOKEN", "")
@@ -24,15 +24,15 @@ client = InferenceClient(token=HF_TOKEN)
 # Function to test API connectivity
 def test_api():
     try:
-        test_prompt = "Return: API is working."
+        test_prompt = "<s>[INST] Return: API is working. [/INST]"
         response = client.text_generation(
             test_prompt,
-            model="microsoft/Phi-3-mini-4k-instruct",
+            model="mistralai/Mistral-7B-Instruct-v0.2",
             max_new_tokens=10,
             temperature=0.1
         )
         if "API is working" in response:
-            st.success("Hugging Face API is working correctly!")
+            st.success("Hugging Face API is working correctly with Mistral-7B-Instruct-v0.2!")
         else:
             st.warning("API responded but returned unexpected output.")
     except Exception as e:
@@ -76,12 +76,10 @@ def is_resume(file_name, text):
     cover_score = sum(1 for keyword in cover_letter_keywords if keyword in text_lower)
     return resume_score > cover_score or resume_score > 0
 
-# Function to extract candidate details using Phi-3 with regex fallback
+# Function to extract candidate details using Mistral-7B-Instruct-v0.2
 def extract_candidate_details(cv_text, cv_name):
     try:
-        prompt = f"""
-        CV: {cv_text}
-        Extract the following details from the CV:
+        prompt = f"""<s>[INST] Extract the following details from the CV below:
         1. Name of applicant
         2. Current or last position held
         3. Current or last organization
@@ -90,13 +88,13 @@ def extract_candidate_details(cv_text, cv_name):
         6. Education (list all degrees, e.g., 'BSc Computer Science, MSc Data Science')
         7. Phone number
         8. Email address
+        CV: {cv_text}
         Output ONLY in this format:
         Name: [text] | Position: [text] | Organization: [text] | TotalExp: [number] | RelevantExp: [number] | Education: [text] | Phone: [text] | Email: [text]
-        If a field is missing, use 'Not found'.
-        """
+        If a field is missing, use 'Not found'. [/INST]"""
         response = client.text_generation(
             prompt,
-            model="microsoft/Phi-3-mini-4k-instruct",
+            model="mistralai/Mistral-7B-Instruct-v0.2",
             max_new_tokens=200,
             temperature=0.1
         )
@@ -131,7 +129,7 @@ def extract_candidate_details(cv_text, cv_name):
         return {"cv_name": cv_name, "Name": "Not found", "Position": "Not found", "Organization": "Not found",
                 "TotalExp": 0, "RelevantExp": 0, "Education": "Not found", "Phone": "Not found", "Email": "Not found"}
 
-# Function to score a single CV against JD using Phi-3
+# Function to score a single CV against JD using Mistral-7B-Instruct-v0.2
 def score_cv(jd_text, cv_text, cv_name, exp_weight, edu_weight, skill_weight):
     try:
         total_weight = exp_weight + edu_weight + skill_weight
@@ -140,19 +138,17 @@ def score_cv(jd_text, cv_text, cv_name, exp_weight, edu_weight, skill_weight):
             edu_weight = (edu_weight / total_weight) * 100
             skill_weight = (skill_weight / total_weight) * 100
         
-        prompt = f"""
-        JD: {jd_text}
-        CV: {cv_text}
-        Analyze the CV against the JD and score the fit (0-100) based on the following prioritized criteria:
+        prompt = f"""<s>[INST] Analyze the CV against the JD and score the fit (0-100) based on the following prioritized criteria:
         1. Relevant Experience ({exp_weight}% weight): Prioritize experience in the same or higher role as the JD, with longer tenure in such roles being better. Experience in the telecom industry is preferred.
         2. Education ({edu_weight}% weight): Degrees and fields aligning with JD requirements (e.g., relevant majors, higher degrees preferred).
         3. Skills and Abilities ({skill_weight}% weight): Technical and soft skills matching JD requirements.
+        JD: {jd_text}
+        CV: {cv_text}
         Output ONLY in this format:
-        Score: X/100 | Reasons: [1-2 sentences explaining the score, focusing on experience, education, and skills]
-        """
+        Score: X/100 | Reasons: [1-2 sentences explaining the score, focusing on experience, education, and skills] [/INST]"""
         response = client.text_generation(
             prompt,
-            model="microsoft/Phi-3-mini-4k-instruct",
+            model="mistralai/Mistral-7B-Instruct-v0.2",
             max_new_tokens=100,
             temperature=0.1
         )
