@@ -22,7 +22,7 @@ headers = {
 
 def test_api_key():
     test_payload = {
-        "model": "gpt-3.5-turbo",
+        "model": "openai/gpt-oss-20b",
         "messages": [{"role": "user", "content": "Say hello"}]
     }
     try:
