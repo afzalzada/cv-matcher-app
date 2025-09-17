@@ -11,8 +11,8 @@ import textract
 import striprtf
 
 # ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
-API_KEY = st.secrets["openai"]["key"]
-API_URL = "https://api.openai.com/v1/chat/completions"
+API_KEY = st.secrets["groq"]["key"]
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 headers = {
     "Authorization": f"Bearer {API_KEY}",
