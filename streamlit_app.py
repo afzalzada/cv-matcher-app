@@ -8,12 +8,11 @@ import io
 import requests
 import re
 import zipfile
-from PIL import Image
-import pytesseract
-from pdf2image import convert_from_bytes
+import textract
+import striprtf
 
-# Load API key securely from Streamlit Cloud Secrets Manager
-API_KEY = st.secrets["openrouter"]["key"]
+# ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
+API_KEY = st.secrets["openrouter"]["key"] if "openrouter" in st.secrets else st.text_input("Enter your OpenRouter API Key", type="password")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 headers = {
@@ -37,38 +36,28 @@ def test_api_key():
     except Exception as e:
         st.error(f"⚠️ Error connecting to API: {e}")
 
-# Unified text extraction with OCR fallback
+# Unified text extraction for supported formats
 def extract_text(file):
     try:
         filename = file.name.lower()
 
         if filename.endswith(".pdf"):
             doc = fitz.open(stream=file.read(), filetype="pdf")
-            text = "".join([page.get_text() for page in doc])
-            if not text.strip():
-                st.warning(f"⚠️ No extractable text found in {file.name}. Trying OCR...")
-                images = convert_from_bytes(file.getvalue())
-                text = "\n".join([pytesseract.image_to_string(img) for img in images])
-            return text
+            return "".join([page.get_text() for page in doc])
 
         elif filename.endswith(".docx"):
             doc = docx.Document(file)
             return "\n".join([para.text for para in doc.paragraphs])
 
-        elif filename.endswith(".png") or filename.endswith(".jpg") or filename.endswith(".jpeg"):
-            image = Image.open(file)
-            return pytesseract.image_to_string(image)
+        elif filename.endswith(".doc"):
+            return textract.process(file.name).decode("utf-8", errors="ignore")
 
         elif filename.endswith(".rtf"):
             rtf_text = file.read().decode("utf-8", errors="ignore")
-            return rtf_text
-
-        elif filename.endswith(".doc"):
-            st.warning("⚠️ .doc file support requires 'textract' which is not available in this environment.")
-            return ""
+            return striprtf.rtf_to_text(rtf_text)
 
         else:
-            st.error(f"Unsupported file type: {file.name}")
+            st.warning(f"⚠️ Skipping unsupported file type: {file.name}")
             return ""
 
     except Exception as e:
@@ -171,15 +160,15 @@ def generate_zip_of_top_cvs(files, ranked_indices, top_n=30):
     zip_buffer.seek(0)
     return zip_buffer
 
-# Streamlit UI
-st.title("📄 AI CV Matcher (Hybrid Scoring)")
-st.write("Upload a Job Description and multiple CVs to find the best matches using AI and custom logic.")
+# 🌐 Streamlit UI
+st.title("📄 AI CV Matcher (Qwen3-4B)")
+st.write("Upload a Job Description and multiple CVs to find the best matches using AI.")
 
 if st.button("🔍 Test API Key"):
     test_api_key()
 
-jd_file = st.file_uploader("Upload Job Description (PDF, DOCX, DOC, RTF, PNG, JPG)", type=["pdf", "docx", "doc", "rtf", "png", "jpg", "jpeg"])
-cv_files = st.file_uploader("Upload CVs (PDF, DOCX, DOC, RTF, PNG, JPG)", type=["pdf", "docx", "doc", "rtf", "png", "jpg", "jpeg"], accept_multiple_files=True)
+jd_file = st.file_uploader("Upload Job Description (PDF, DOCX, DOC, RTF)", type=["pdf", "docx", "doc", "rtf"])
+cv_files = st.file_uploader("Upload CVs (PDF, DOCX, DOC, RTF)", type=["pdf", "docx", "doc", "rtf"], accept_multiple_files=True)
 
 if jd_file and cv_files:
     jd_text = extract_text(jd_file)
@@ -192,7 +181,7 @@ if jd_file and cv_files:
             cv_names.append(cv_file.name)
 
     scores, explanations, emails, phones = [], [], [], []
-    with st.spinner("Analyzing CVs with Hybrid Scoring..."):
+    with st.spinner("Analyzing CVs with AI..."):
         for text in cv_texts:
             score, explanation = hybrid_match_score(text, jd_text)
             email_list, phone_list = extract_contacts(text)
