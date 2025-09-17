@@ -11,11 +11,13 @@ import textract
 import striprtf
 
 # ✅ Load API key securely from Streamlit Cloud Secrets Manager or local input
-API_KEY = st.secrets["gemini"]["key"]
-API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+API_KEY = st.secrets["groq"]["key"]
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 headers = {
-    "Content-Type": "application/json",
+    "Authorization": f"Bearer {API_KEY}",
+    "HTTP-Referer": "https://your-app-url.com",
+    "X-Title": "CV Matcher App"
 }
 
 def test_api_key():
@@ -80,13 +82,26 @@ Score: <number>
 Explanation: <text>
 """
     payload = {
-    "contents": [{"parts": [{"text": prompt}]}]
-}
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": prompt}]
+    }
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
 response_json = response.json()
-    if "candidates" in response_json and len(response_json["candidates"]) > 0:
-        content = response_json["candidates"][0]["content"]["parts"][0]["text"]}")
+if "choices" in response_json and len(response_json["choices"]) > 0:
+    content = response_json["choices"][0]["message"]["content"]
+    # continue parsing...
+else:
+    st.error("❌ Failed to parse API response: 'choices' missing or malformed.")
+    st.write(response_json)
+    return 0, "No explanation available due to malformed API response."
+        score_line = content.split('\n')[0]
+        explanation_line = "\n".join(content.split('\n')[1:])
+        score = int(score_line.replace("Score:", "").strip())
+        explanation = explanation_line.replace("Explanation:", "").strip()
+        return score, explanation
+    except Exception as e:
+        st.error(f"❌ Failed to parse API response: {e}")
         return 0, "No explanation available due to API error."
 
 def hybrid_match_score(cv_text, jd_text):
