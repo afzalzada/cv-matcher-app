@@ -1,0 +1,28 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenRouter AI Chat</title>
+    <script src="https://js.puter.com/v2/"></script>
+</head>
+<body>
+    <h2>Ask AI (Llama 3)</h2>
+    <input type="text" id="userInput" placeholder="Type your question here..." style="width: 80%;">
+    <button onclick="askAI()">Submit</button>
+    <div id="response" style="margin-top: 20px;"></div>
+
+    <script>
+        function askAI() {
+            const query = document.getElementById("userInput").value;
+            document.getElementById("response").innerHTML = "Loading...";
+            puter.ai.chat(query, {
+                model: 'openrouter:meta-llama/llama-3.1-8b-instruct'
+            }).then(response => {
+                document.getElementById("response").innerHTML = response;
+            }).catch(error => {
+                document.getElementById("response").innerHTML = "Error: " + error;
+            });
+        }
+    </script>
+</body>
+</html>
