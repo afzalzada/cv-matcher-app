@@ -87,7 +87,14 @@ Explanation: <text>
     }
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
-        content = response.json()["choices"][0]["message"]["content"]
+response_json = response.json()
+if "choices" in response_json and len(response_json["choices"]) > 0:
+    content = response_json["choices"][0]["message"]["content"]
+    # continue parsing...
+else:
+    st.error("❌ Failed to parse API response: 'choices' missing or malformed.")
+    st.write(response_json)
+    return 0, "No explanation available due to malformed API response."
         score_line = content.split('\n')[0]
         explanation_line = "\n".join(content.split('\n')[1:])
         score = int(score_line.replace("Score:", "").strip())
