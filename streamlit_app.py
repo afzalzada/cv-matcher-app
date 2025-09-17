@@ -12,7 +12,7 @@ import io
 # Streamlit app configuration
 st.set_page_config(page_title="CV-JD Matcher", layout="wide")
 st.title("CV-JD Matcher")
-st.write("Upload a Job Description and CVs/Resumes (PDF, DOCX, DOC, RTF) to find the top 20 candidates using AI (Mistral-7B-Instruct-v0.2 via Hugging Face).")
+st.write("Upload a Job Description and CVs/Resumes (PDF, DOCX, DOC, RTF) to find the top 20 candidates using AI (DistilGPT-2 via Hugging Face).")
 
 # Initialize Hugging Face Inference Client
 HF_TOKEN = st.secrets.get("HF_TOKEN", "")
@@ -24,15 +24,15 @@ client = InferenceClient(token=HF_TOKEN)
 # Function to test API connectivity
 def test_api():
     try:
-        test_prompt = "<s>[INST] Return: API is working. [/INST]"
+        test_prompt = "As an AI assistant, return: API is working."
         response = client.text_generation(
             test_prompt,
-            model="mistralai/Mistral-7B-Instruct-v0.2",
+            model="distilgpt2",
             max_new_tokens=10,
             temperature=0.1
         )
-        if "API is working" in response:
-            st.success("Hugging Face API is working correctly with Mistral-7B-Instruct-v0.2!")
+        if "API is working" in response.lower():
+            st.success("Hugging Face API is working correctly with DistilGPT-2!")
         else:
             st.warning("API responded but returned unexpected output.")
     except Exception as e:
@@ -76,10 +76,10 @@ def is_resume(file_name, text):
     cover_score = sum(1 for keyword in cover_letter_keywords if keyword in text_lower)
     return resume_score > cover_score or resume_score > 0
 
-# Function to extract candidate details using Mistral-7B-Instruct-v0.2
+# Function to extract candidate details using DistilGPT-2
 def extract_candidate_details(cv_text, cv_name):
     try:
-        prompt = f"""<s>[INST] Extract the following details from the CV below:
+        prompt = f"""As an AI recruiter, extract the following details from the CV: 
         1. Name of applicant
         2. Current or last position held
         3. Current or last organization
@@ -88,13 +88,12 @@ def extract_candidate_details(cv_text, cv_name):
         6. Education (list all degrees, e.g., 'BSc Computer Science, MSc Data Science')
         7. Phone number
         8. Email address
-        CV: {cv_text}
-        Output ONLY in this format:
-        Name: [text] | Position: [text] | Organization: [text] | TotalExp: [number] | RelevantExp: [number] | Education: [text] | Phone: [text] | Email: [text]
-        If a field is missing, use 'Not found'. [/INST]"""
+        CV: {cv_text[:1500]}  # Truncate for context limit
+        Output ONLY in this format: Name: [text] | Position: [text] | Organization: [text] | TotalExp: [number] | RelevantExp: [number] | Education: [text] | Phone: [text] | Email: [text]
+        If a field is missing, use 'Not found'."""
         response = client.text_generation(
             prompt,
-            model="mistralai/Mistral-7B-Instruct-v0.2",
+            model="distilgpt2",
             max_new_tokens=200,
             temperature=0.1
         )
@@ -129,7 +128,7 @@ def extract_candidate_details(cv_text, cv_name):
         return {"cv_name": cv_name, "Name": "Not found", "Position": "Not found", "Organization": "Not found",
                 "TotalExp": 0, "RelevantExp": 0, "Education": "Not found", "Phone": "Not found", "Email": "Not found"}
 
-# Function to score a single CV against JD using Mistral-7B-Instruct-v0.2
+# Function to score a single CV against JD using DistilGPT-2
 def score_cv(jd_text, cv_text, cv_name, exp_weight, edu_weight, skill_weight):
     try:
         total_weight = exp_weight + edu_weight + skill_weight
@@ -138,17 +137,16 @@ def score_cv(jd_text, cv_text, cv_name, exp_weight, edu_weight, skill_weight):
             edu_weight = (edu_weight / total_weight) * 100
             skill_weight = (skill_weight / total_weight) * 100
         
-        prompt = f"""<s>[INST] Analyze the CV against the JD and score the fit (0-100) based on the following prioritized criteria:
+        prompt = f"""As an AI recruiter, analyze the CV against the JD and score the fit (0-100) based on:
         1. Relevant Experience ({exp_weight}% weight): Prioritize experience in the same or higher role as the JD, with longer tenure in such roles being better. Experience in the telecom industry is preferred.
         2. Education ({edu_weight}% weight): Degrees and fields aligning with JD requirements (e.g., relevant majors, higher degrees preferred).
         3. Skills and Abilities ({skill_weight}% weight): Technical and soft skills matching JD requirements.
-        JD: {jd_text}
-        CV: {cv_text}
-        Output ONLY in this format:
-        Score: X/100 | Reasons: [1-2 sentences explaining the score, focusing on experience, education, and skills] [/INST]"""
+        JD: {jd_text[:800]}
+        CV: {cv_text[:800]}
+        Output ONLY: Score: X/100 | Reasons: [1-2 sentences explaining the score, focusing on experience, education, and skills]"""
         response = client.text_generation(
             prompt,
-            model="mistralai/Mistral-7B-Instruct-v0.2",
+            model="distilgpt2",
             max_new_tokens=100,
             temperature=0.1
         )
