@@ -6,16 +6,33 @@ from fpdf import FPDF
 import io
 import requests
 import re
+import zipfile
 
-# Load API key from Streamlit secrets
-API_KEY = st.secrets["OPENROUTER_API_KEY"]
+# ✅ Load API key securely from Streamlit Cloud Secrets Manager
+API_KEY = st.secrets["openrouter"]["key"]
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 headers = {
     "Authorization": f"Bearer {API_KEY}",
-    "HTTP-Referer": "https://your-app-url.com",  # Optional
-    "X-Title": "CV Matcher App"                  # Optional
+    "HTTP-Referer": "https://your-app-url.com",
+    "X-Title": "CV Matcher App"
 }
+
+# ✅ Test API Key connection
+def test_api_key():
+    test_payload = {
+        "model": "qwen/qwen3-4b:free",
+        "messages": [{"role": "user", "content": "Say hello"}]
+    }
+    try:
+        response = requests.post(API_URL, headers=headers, json=test_payload)
+        if response.status_code == 200:
+            st.success("✅ API key is working and connected to OpenRouter.")
+        else:
+            st.error(f"❌ API key failed. Status code: {response.status_code}")
+            st.write(response.text)
+    except Exception as e:
+        st.error(f"⚠️ Error connecting to API: {e}")
 
 # Extract text from PDF
 def extract_text_from_pdf(file):
@@ -91,9 +108,23 @@ def generate_pdf(names, scores, explanations, emails, phones):
         pdf.ln(5)
     return io.BytesIO(pdf.output(dest='S').encode('latin1'))
 
+# Generate ZIP of top CVs
+def generate_zip_of_top_cvs(files, ranked_indices, top_n=30):
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+        for i in ranked_indices[:top_n]:
+            file = files[i]
+            zip_file.writestr(file.name, file.getvalue())
+    zip_buffer.seek(0)
+    return zip_buffer
+
 # Streamlit UI
 st.title("📄 AI CV Matcher (Qwen3-4B)")
 st.write("Upload a Job Description and multiple CVs to find the best matches using AI.")
+
+# 🔘 Add test button
+if st.button("🔍 Test API Key"):
+    test_api_key()
 
 jd_file = st.file_uploader("Upload Job Description (PDF or DOCX)", type=["pdf", "docx"])
 cv_files = st.file_uploader("Upload CVs (PDF or DOCX)", type=["pdf", "docx"], accept_multiple_files=True)
@@ -118,13 +149,16 @@ if jd_file and cv_files:
             phones.append(", ".join(phone_list) if phone_list else "Not found")
 
     ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    top_names = [cv_names[i] for i in ranked]
-    top_scores = [scores[i] for i in ranked]
-    top_explanations = [explanations[i] for i in ranked]
-    top_emails = [emails[i] for i in ranked]
-    top_phones = [phones[i] for i in ranked]
+    top_n = min(30, len(scores))
+    top_indices = ranked[:top_n]
 
-    st.subheader("🏆 Top Matching CVs")
+    top_names = [cv_names[i] for i in top_indices]
+    top_scores = [scores[i] for i in top_indices]
+    top_explanations = [explanations[i] for i in top_indices]
+    top_emails = [emails[i] for i in top_indices]
+    top_phones = [phones[i] for i in top_indices]
+
+    st.subheader(f"🏆 Top {top_n} Matching CVs")
     for name, score, explanation, email, phone in zip(top_names, top_scores, top_explanations, top_emails, top_phones):
         st.markdown(f"**{name}** — Match Score: `{score}`")
         st.write(explanation)
@@ -134,6 +168,8 @@ if jd_file and cv_files:
 
     excel_file = generate_excel(top_names, top_scores, top_explanations, top_emails, top_phones)
     pdf_file = generate_pdf(top_names, top_scores, top_explanations, top_emails, top_phones)
+    zip_file = generate_zip_of_top_cvs(cv_files, ranked, top_n=30)
 
     st.download_button("📥 Download Results as Excel", data=excel_file, file_name="top_matching_cvs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     st.download_button("📥 Download Results as PDF", data=pdf_file, file_name="top_matching_cvs.pdf", mime="application/pdf")
+    st.download_button("📥 Download Top 30 CVs as ZIP", data=zip_file, file_name="top_30_cvs.zip", mime="application/zip")
