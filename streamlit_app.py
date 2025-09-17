@@ -209,3 +209,10 @@ if jd_file and cv_files:
     st.download_button("📥 Download Results as Excel", data=excel_file, file_name="top_matching_cvs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     st.download_button("📥 Download Results as PDF", data=pdf_file, file_name="top_matching_cvs.pdf", mime="application/pdf")
     st.download_button("📥 Download Top 30 CVs as ZIP", data=zip_file, file_name="top_30_cvs.zip", mime="application/zip")
+
+
+
+# 🤖 Resume Assistant (Powered by Puter.js + OpenRouter)
+st.subheader("🤖 Resume Assistant")
+st.markdown("Ask questions about resume writing, job descriptions, or interview tips using free AI.")
+st.components.v1.html('<iframe src="https://puter.com/ai-chat" width="100%" height="600px" frameborder="0"></iframe>', height=600)
