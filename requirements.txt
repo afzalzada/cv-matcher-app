@@ -5,5 +5,9 @@ fpdf
 openpyxl
 pandas
 python-docx
-PyMuPDF
 requests
+pytesseract
+pillow
+pdf2image
+textract
+striprtf
